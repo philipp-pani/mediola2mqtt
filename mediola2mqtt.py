@@ -139,6 +139,7 @@ def on_message(client, obj, msg):
                 return
             url = 'http://' + host + '/command'
             response = requests.get(url, params=payload, headers={'Connection':'close'})
+            return
 
 def on_publish(client, obj, mid):
     print("Pub: " + str(mid))
