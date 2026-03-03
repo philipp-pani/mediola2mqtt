@@ -58,12 +58,38 @@ def on_message(client, obj, msg):
     mediolaid = dtype.split("/")[-2]
     dtype = dtype[dtype.rfind("/")+1:]
     adr = adr[:adr.find("/")]
+    
+    sub_identifier = None
+    if '-' in adr:
+        adr, sub_identifier = adr.split('-', 1)
+
+    # Buttons send "press". (Allow a few legacy values too.)
+    if sub_identifier:
+        if msg.payload not in (b'press', b'on', b'1', b'true', b'True', b''):
+            print("Wrong command (expected press)")
+            return
+
     for ii in range(0, len(config['blinds'])):
         if dtype == config['blinds'][ii]['type'] and adr == config['blinds'][ii]['adr']:
             if isinstance(config['mediola'], list):
                 if config['blinds'][ii]['mediola'] != mediolaid:
                     continue
-            if msg.payload == b'open':
+            
+            if sub_identifier:
+                # ER-only extra controls
+                if dtype != 'ER':
+                    return
+                if sub_identifier == 'doubleup':
+                    data = format(int(adr), "02x") + "0A"
+                elif sub_identifier == 'doubledown':
+                    data = format(int(adr), "02x") + "0B"
+                elif sub_identifier == 'stepup':
+                    data = format(int(adr), "02x") + "03"
+                elif sub_identifier == 'stepdown':
+                    data = format(int(adr), "02x") + "04"
+                else:
+                    return
+            elif msg.payload == b'open':
                 if dtype == 'RT':
                     data = "20" + adr
                 elif dtype == 'ER':
@@ -87,19 +113,22 @@ def on_message(client, obj, msg):
             else:
                 print("Wrong command")
                 return
+            
             payload = {
-              "XC_FNC" : "SendSC",
-              "type" : dtype,
-              "data" : data
+              "XC_FNC": "SendSC",
+              "type": dtype,
+              "data": data
             }
+
             host = ''
             if isinstance(config['mediola'], list):
                 mediolaid = config['blinds'][ii]['mediola']
                 for jj in range(0, len(config['mediola'])):
                     if mediolaid == config['mediola'][jj]['id']:
                         host = config['mediola'][jj]['host']
-                    if 'password' in config['mediola'][jj] and config['mediola'][jj]['password'] != '':
-                        payload['XC_PASS'] = config['mediola'][jj]['password']
+                        if 'password' in config['mediola'][jj] and config['mediola'][jj]['password'] != '':
+                            payload['XC_PASS'] = config['mediola'][jj]['password']
+                        break
             else:
                 host = config['mediola']['host']
                 if 'password' in config['mediola'] and config['mediola']['password'] != '':
