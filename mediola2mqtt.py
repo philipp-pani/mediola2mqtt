@@ -52,7 +52,8 @@ def on_disconnect(client, userdata, rc):
         print("Disconnected")
 
 def on_message(client, obj, msg):
-    print("Msg: " + msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
+    if config['mqtt']['debug']:
+        print("Msg: " + msg.topic + " " + str(msg.qos) + " " + str(msg.payload))
     # Here we should send a HTTP request to Mediola to open the blind
     dtype, adr = msg.topic.split("_")
     mediolaid = dtype.split("/")[-2]
