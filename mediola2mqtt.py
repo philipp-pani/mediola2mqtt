@@ -154,53 +154,60 @@ def setup_discovery():
     """
     Publish Home Assistant MQTT Discovery entities.
 
-    - Covers (blinds) are published as HA cover entities.
-    - For ER blinds we additionally publish 4 HA button entities (double/step controls),
-      with command topics under /blinds/... so they are handled by on_message().
-    - Entity/device naming uses:
-        * blind['name'] for human-friendly names
-        * blind['id'] for stable unique_id / device identifiers (fallback to mediolaid + '_' + identifier)
-    - We do NOT publish legacy 'buttons' as device_automation triggers here.
-      (You can add them later as HA button entities if you still need them.)
+    - Publishes each configured blind as a HA cover entity.
+    - For ER blinds, publishes additional HA button entities based on a *global*
+      controls profile selected via blind["kind"] (e.g. raffstore vs rollo).
+    - Button command topics are published under /blinds/... so they are handled by on_message().
+    - Naming/identity:
+        * blind["name"] -> human friendly display name in HA
+        * blind["id"]   -> stable HA unique_id + device identifiers (fallback to "<mediolaid>_<TYPE>_<ADR>")
     """
     if 'blinds' not in config:
         return
 
-    for ii in range(len(config['blinds'])):
-        blind = config['blinds'][ii]
+    mqtt_cfg = config.get('mqtt', {})
+    discovery_prefix = mqtt_cfg.get('discovery_prefix', 'homeassistant')
+    base_root = mqtt_cfg.get('topic', 'mediola')
 
-        identifier = blind['type'] + '_' + blind['adr']          # e.g. ER_03
-        mediolaid = 'mediola'
+    # Global control profiles
+    profiles = (config.get("controls") or {}).get("profiles", {})
+
+    for blind in config['blinds']:
+        btype = blind.get('type')
+        adr = blind.get('adr')
+        if not btype or adr is None:
+            continue
+
+        identifier = f"{btype}_{adr}"  # e.g. ER_03
+
+        # Resolve mediola gateway id/host
+        mediolaid = blind.get('mediola', 'mediola')
         host = ''
-
-        if isinstance(config['mediola'], list):
-            mediolaid = blind.get('mediola', 'mediola')
+        if isinstance(config.get('mediola'), list):
             for gw in config['mediola']:
                 if mediolaid == gw.get('id'):
                     host = gw.get('host', '')
                     break
         else:
-            host = config['mediola'].get('host', '')
+            host = (config.get('mediola') or {}).get('host', '')
 
-        if host == '':
+        if not host:
             print('Error: Could not find matching Mediola!')
             continue
 
-        # Human-friendly name shown in HA
+        # Human-friendly name
         name = blind.get('name', identifier)
 
-        # Stable id for HA device/entity identifiers
-        blind_id = blind.get('id')
-        if not blind_id:
-            blind_id = mediolaid + '_' + identifier  # fallback
+        # Stable HA id
+        blind_id = blind.get('id') or f"{mediolaid}_{identifier}"
 
         # -------------------------
         # Cover discovery (blind)
         # -------------------------
-        dtopic = f"{config['mqtt']['discovery_prefix']}/cover/{blind_id}/config"
-        base_topic = f"{config['mqtt']['topic']}/blinds/{mediolaid}/{identifier}"
+        dtopic = f"{discovery_prefix}/cover/{blind_id}/config"
+        base_topic = f"{base_root}/blinds/{mediolaid}/{identifier}"
 
-        payload = {
+        cover_payload = {
             "command_topic": base_topic + "/set",
             "payload_open": "open",
             "payload_close": "close",
@@ -216,41 +223,49 @@ def setup_discovery():
             },
         }
 
-        if blind['type'] == 'ER':
-            payload["state_topic"] = base_topic + "/state"
+        if btype == 'ER':
+            cover_payload["state_topic"] = base_topic + "/state"
 
         mqttc.subscribe(base_topic + "/set")
-        mqttc.publish(dtopic, payload=json.dumps(payload), retain=True)
+        mqttc.publish(dtopic, payload=json.dumps(cover_payload), retain=True)
 
-        # -----------------------------------------
-        # ER extra controls as HA button entities
-        # Topics stay under /blinds/..., handled by on_message()
-        # -----------------------------------------
-        if blind['type'] == 'ER':
-            def publish_ha_button(suffix: str, label: str):
-                btn_uid = f"{blind_id}_{suffix}"
-                btn_dtopic = f"{config['mqtt']['discovery_prefix']}/button/{btn_uid}/config"
-                cmd_topic = f"{base_topic}-{suffix}/set"
+        # -------------------------
+        # ER extra controls (buttons) via profile
+        # -------------------------
+        if btype != 'ER':
+            continue
 
-                btn_payload = {
-                    "name": f"{name} {label}",
-                    "unique_id": btn_uid,
-                    "command_topic": cmd_topic,
-                    "payload_press": "press",
-                    "device": {
-                        "identifiers": blind_id,
-                        "manufacturer": "Mediola",
-                        "name": name,
-                    },
-                }
+        kind = blind.get("kind")  # e.g. "raffstore" or "rollo"
+        profile = profiles.get(kind)
 
-                mqttc.subscribe(cmd_topic)
-                mqttc.publish(btn_dtopic, payload=json.dumps(btn_payload), retain=True)
+        # If no profile or empty profile => no buttons (e.g. rollo)
+        if not profile:
+            continue
 
-            publish_ha_button("doubleup", "Lamellen oeffnen")
-            publish_ha_button("doubledown", "Komfortposition")
-            publish_ha_button("stepup", "Lamellen oeffnen (Step)")
-            publish_ha_button("stepdown", "Lamellen schliessen (Step)")
+        # profile is expected to be a mapping like:
+        # { doubleup: "Lamellen öffnen", stepup: "...", ... }
+        for control_key, label in profile.items():
+            if not isinstance(label, str) or not label.strip():
+                continue
+
+            btn_uid = f"{blind_id}_{control_key}"
+            btn_dtopic = f"{discovery_prefix}/button/{btn_uid}/config"
+            cmd_topic = f"{base_topic}-{control_key}/set"
+
+            btn_payload = {
+                "name": f"{name} {label}",
+                "unique_id": btn_uid,
+                "command_topic": cmd_topic,
+                "payload_press": "press",
+                "device": {
+                    "identifiers": blind_id,
+                    "manufacturer": "Mediola",
+                    "name": name,
+                },
+            }
+
+            mqttc.subscribe(cmd_topic)
+            mqttc.publish(btn_dtopic, payload=json.dumps(btn_payload), retain=True)
 
 def handle_button(packet_type, address, state, mediolaid):
     retain = False
