@@ -1,1 +1,9 @@
 mediola2mqtt.yaml
+
+# Editor temp files
+#*#
+
+# Backup files
+*.bak*
+*.save
+*.save.*
