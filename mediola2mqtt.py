@@ -201,6 +201,12 @@ def setup_discovery():
         # Stable HA id
         blind_id = blind.get('id') or f"{mediolaid}_{identifier}"
 
+        device_payload = {
+            "identifiers": blind_id,
+            "manufacturer": "Mediola",
+            "name": name,
+        }
+
         # -------------------------
         # Cover discovery (blind)
         # -------------------------
@@ -215,12 +221,9 @@ def setup_discovery():
             "optimistic": True,
             "device_class": "blind",
             "unique_id": blind_id,
+            "object_id": blind_id,
             "name": name,
-            "device": {
-                "identifiers": blind_id,
-                "manufacturer": "Mediola",
-                "name": name,
-            },
+            "device": device_payload,
         }
 
         if btype == 'ER':
@@ -242,26 +245,24 @@ def setup_discovery():
         if not profile:
             continue
 
-        # profile is expected to be a mapping like:
-        # { doubleup: "Lamellen öffnen", stepup: "...", ... }
+        # profile: { doubleup: "Lamellen öffnen", doubledown: "Komfortposition", ... }
         for control_key, label in profile.items():
             if not isinstance(label, str) or not label.strip():
                 continue
 
-            btn_uid = f"{blind_id}_{control_key}"
-            btn_dtopic = f"{discovery_prefix}/button/{btn_uid}/config"
-            cmd_topic = f"{base_topic}-{control_key}/set"
+            btn_object_id = f"{blind_id}_{control_key}"          # rf_buero_doubledown
+            btn_unique_id  = btn_object_id                       # stabil & gleich
+
+            btn_dtopic = f"{discovery_prefix}/button/{btn_object_id}/config"
+            cmd_topic  = f"{base_topic}-{control_key}/set"
 
             btn_payload = {
-                "name": f"{name} {label}",
-                "unique_id": btn_uid,
+                "name": f"{name} {label}",                       # nur Anzeige-Name
+                "unique_id": btn_unique_id,
+                "object_id": btn_object_id,                      # <— wichtig, damit entity_id sauber bleibt
                 "command_topic": cmd_topic,
                 "payload_press": "press",
-                "device": {
-                    "identifiers": blind_id,
-                    "manufacturer": "Mediola",
-                    "name": name,
-                },
+                "device": device_payload,
             }
 
             mqttc.subscribe(cmd_topic)
